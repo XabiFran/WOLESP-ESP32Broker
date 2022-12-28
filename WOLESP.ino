@@ -1,4 +1,4 @@
-//Version que permite "encender" ordenadores mediante la variable TURNON
+//Version que permite recibir acciones mediante eventos, siendo el esp32 un listener, incorporada la funcion PING y ajustes
 #define ESP_DRD_USE_SPIFFS true
 #include <WiFi.h>
 #include <FS.h>
@@ -10,6 +10,8 @@
 #include <WakeOnLan.h>
 #include <Firebase_ESP_Client.h>
 #include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
+#include <ESP32Ping.h>
 #define JSON_CONFIG_FILE "/sample_config.json"
 
 // Number of seconds after reset during which a
@@ -21,8 +23,10 @@
 
 #define FIREBASE_PROJECT_ID "wolespdb"
 #define API_KEY "AIzaSyDk52kOpbvh9GUPoHi6eH51LKikC_nTt5g"
+#define DATABASE_URL "wolespdb-default-rtdb.europe-west1.firebasedatabase.app"
 
 //Firebase objects
+FirebaseData stream;
 FirebaseData fbdo;
 FirebaseAuth auth;
 FirebaseConfig config;
@@ -35,13 +39,140 @@ DoubleResetDetector *drd;
 //flag for saving data
 bool shouldSaveConfig = false;
 
-char testString[50] = "deafult value";
-char testString2[50] = "deafult value";
-char testPass[50] = "deafult value";
+char testString[50] = "default value";
+char testString2[50] = "default value";
+char testPass[50] = "default value";
 bool mail_received = true;
 bool pass_received = true;
 int testNumber = 1500;
 bool encendido = false;
+
+unsigned long sendDataPrevMillis = 0;
+
+int count = 0;
+
+volatile bool dataChanged = false;
+
+void streamCallback(FirebaseStream data)
+{
+  Serial.printf("stream path, %s\nevent path, %s\ndata type, %s\nevent type, %s\n\n",
+                data.streamPath().c_str(),
+                data.dataPath().c_str(),
+                data.dataType().c_str(),
+                data.eventType().c_str());
+  printResult(data); // see addons/RTDBHelper.h
+  if (data.dataTypeEnum() == fb_esp_rtdb_data_type_integer)
+    Serial.println(data.to<int>());
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_float)
+    Serial.println(data.to<float>(), 5);
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_double)
+    printf("%.9lf\n", data.to<double>());
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_boolean)
+    Serial.println(data.to<bool>() ? "true" : "false");
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_string)
+    Serial.println(data.to<String>());
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_json)
+  {
+    FirebaseJson *json = data.to<FirebaseJson *>();
+    Serial.println(json->raw());
+    if (data.payloadLength() <= 450) {
+      StaticJsonDocument<450> doc;
+      DeserializationError error = deserializeJson(doc, json->raw());
+      if (error) {
+        Serial.print("deserializeJson() failed: ");
+        Serial.println(error.c_str());
+        return;
+      }
+      const char* PCIDGot = doc["PCID"];// "-NKBETolWMyhD1JcDHEV"
+      String PCID = PCIDGot;
+      const char* deviceIDGot = doc["deviceID"]; // "-NKAzwGEw1pd1EiZyElc"
+      String deviceID = deviceIDGot;
+      const char* actionGotChar = doc["action"]; // "encender"
+      String actionGot = actionGotChar;
+      const char* ipGot = doc["ip"]; // "IP DEL ORDENADOR 1"
+      String StringIP = ipGot;
+      const char* macGot = doc["mac"]; // "Con su mac"
+      String StringMAC = macGot;
+      String uid = auth.token.uid.c_str();
+      String route = "/UsersData/" + uid + "/Devices/" + deviceID + "/PCs/" + PCID + "/on";
+      String PCResultRoute = "/UsersData/" + uid + "/Devices/" + deviceID + "/PCs/" + PCID + "/result";
+      String resultRoute = "/UsersData/" + uid + "/Devices/" + deviceID + "/result";
+      Serial.print(F("ROUTE: "));
+      Serial.println(route);
+      Serial.print(F("Action: "));
+      Serial.println(actionGot);
+      Serial.print(F("IP: "));
+      Serial.println(StringIP);
+      Serial.print(F("MAC: "));
+      Serial.println(macGot);
+      bool foo;
+      if (actionGot == "encender")
+        encenderPC(StringIP, StringMAC, route, resultRoute, PCResultRoute);
+      else if (actionGot == "ping")
+        foo = pingearPC(StringIP, StringMAC, route, PCResultRoute);
+      else if (actionGot == "apagar")
+        Serial.print("ACCIÓN APAGAR EL PC\n");
+      else
+        Serial.print("No se entiende la acción\n");
+    }
+  }
+  else if (data.dataTypeEnum() == fb_esp_rtdb_data_type_array)
+  {
+    FirebaseJsonArray *arr = data.to<FirebaseJsonArray *>();
+    Serial.println(arr->raw());
+  }
+  Serial.printf("Received stream payload size: %d (Max. %d)\n\n", data.payloadLength(), data.maxPayloadLength());
+  dataChanged = true;
+}
+
+void encenderPC(String ip, String mac, String route, String resultRoute, String PCResultRoute) {
+  Serial.println(F("LLEGO A LA FUNCIÓN ENCENDER"));
+  WOL.sendMagicPacket(mac);
+  delay(5000);
+  if (pingearPC(ip, mac, route, PCResultRoute)) {
+    Serial.printf("Set bool... %s\n", Firebase.RTDB.setBool(&fbdo, route, "true") ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, resultRoute, F("Vhatxosas")) ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, resultRoute, F("turnedOn")) ? "ok" : fbdo.errorReason().c_str());
+    //Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, PCResultRoute, F("turnedOn")) ? "ok" : fbdo.errorReason().c_str());
+  } else {
+    Serial.printf("Set bool false... %s\n", Firebase.RTDB.setBool(&fbdo, route, 0 == 1) ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, resultRoute, F("Vhatxosas")) ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, resultRoute, F("notTurnedOn")) ? "ok" : fbdo.errorReason().c_str());
+    //Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, PCResultRoute, F("notTurnedOn")) ? "ok" : fbdo.errorReason().c_str());
+  }
+}
+
+bool pingearPC(String ip, String mac, String route, String PCResultRoute) {
+  Serial.println(F("LLEGO A LA FUNCIÓN PINGEAR"));
+  Serial.println(route);
+  IPAddress apip;
+  const char* rawIP = ip.c_str();
+  if (apip.fromString(rawIP)) { // Intentar parsear la IP
+    Serial.print(F("PC IP: "));
+    Serial.println(apip); // Imprimir la IP Parseada
+  } else {
+    Serial.println(F("Fallo parseando la IP"));
+  }
+
+  if (Ping.ping(apip)) {
+    Serial.printf("Set bool true... %s\n", Firebase.RTDB.setBool(&fbdo, route, "true") ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, PCResultRoute, F("turnedOn")) ? "ok" : fbdo.errorReason().c_str());
+    return true;
+  } else {
+    Serial.printf("Set bool false... %s\n", Firebase.RTDB.setBool(&fbdo, route, 0 == 1) ? "ok" : fbdo.errorReason().c_str());
+    Serial.printf("Set string... %s\n", Firebase.RTDB.setString(&fbdo, PCResultRoute, F("notTurnedOn")) ? "ok" : fbdo.errorReason().c_str());
+    return false;
+  }
+}
+
+void streamTimeoutCallback(bool timeout)
+{
+  if (timeout)
+    Serial.println("stream timed out, resuming...\n");
+
+  if (!stream.httpConnected())
+    Serial.printf("error code: %d, reason: %s\n\n", stream.httpCode(), stream.errorReason().c_str());
+}
 
 void printWelcome() {
   Serial.println(F("==================="));
@@ -74,54 +205,21 @@ void fcsUploadCallback(CFS_UploadStatusInfo info)
   }
 }
 
-
-void encender(String ruta, String PCID) {
-  String documentPath = ruta + "/" + PCID;
-  FirebaseJson content;
-
-  content.set("fields/on/booleanValue", true);
-  Serial.print("Ruta: ");
-  Serial.println(documentPath.c_str());
-  if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "on")) {
-    //Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
-    return;
-  } else {
-    Serial.println(fbdo.errorReason());
-  }
-}
-void apagar(String ruta, String PCID) {
-  String documentPath = ruta + "/" + PCID;
-  FirebaseJson content;
-
-  content.set("fields/on/booleanValue", false);
-  Serial.print("Ruta: ");
-  Serial.println(documentPath.c_str());
-
-  if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "on")) {
-    Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
-    return;
-  } else {
-    Serial.println(fbdo.errorReason());
-  }
-}
-
 void configFirebase() {
   String mail = testString;
   String pass = testString2;
   Serial.println(F("==================="));
   config.api_key = API_KEY;
+  config.database_url = DATABASE_URL;
   auth.user.email = mail;
   auth.user.password = pass;
   Serial.printf("Email got: %s | Pass got: %s \n", mail.c_str(), pass.c_str());
-  //Serial.println("Email coded: " + auth.user.email + " Pass coded: " + auth.user.password);
   /* Assign the callback function for the long running token generation task */
   config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
-  // Limit the size of response payload to be collected in FirebaseData
-  fbdo.setResponseSize(2048);
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
   // For sending payload callback
-  config.cfs.upload_callback = fcsUploadCallback;
+  //config.cfs.upload_callback = fcsUploadCallback;
   Serial.println(F("Getting User UID"));
   while ((auth.token.uid) == "") {
     Serial.print(F('.'));
@@ -130,6 +228,12 @@ void configFirebase() {
 
   Serial.print(F("User UID: "));
   Serial.print(auth.token.uid.c_str());
+
+  String uid = auth.token.uid.c_str();
+  if (!Firebase.RTDB.beginStream(&stream, "/UsersData/" + uid + "/Devices"))
+    Serial.printf("sream begin error, %s\n\n", stream.errorReason().c_str());
+
+  Firebase.RTDB.setStreamCallback(&stream, streamCallback, streamTimeoutCallback);
 }
 
 void saveConfigFile()
@@ -240,48 +344,6 @@ String getCustomParamValue(WiFiManager *myWiFiManager, String name)
   return value;
 }
 
-void getPCData(String ruta, String PCID) {
-  StaticJsonDocument<768> pcJson;
-  DeserializationError desErr;
-  String documentPath = ruta + "/" + PCID;
-  if (Firebase.Firestore.getDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), "")) {
-    //Serial.printf("PC Extraído:\n%s\n\n", fbdo.payload().c_str());
-    desErr = deserializeJson(pcJson, fbdo.payload().c_str());
-    if (desErr) {
-      Serial.print(F("Deserialization error: "));
-      Serial.println(desErr.c_str());
-    }
-    JsonObject fields = pcJson["fields"];
-    const char* rawMac = fields["mac"]["stringValue"];
-    bool turnOn = fields["turnOn"]["booleanValue"];
-    String PCMac = rawMac;
-    Serial.print(F("La MAC de este PC es: "));
-    Serial.println(PCMac);
-    if (turnOn) {
-      Serial.print(F("Turning on..."));
-      Serial.println(PCMac);
-      if (WOL.sendMagicPacket(PCMac) == true)
-        Serial.print(F("Pues devuelve verdadero"));
-      else
-        Serial.print(F("Pues parece que devuelve falso"));
-      FirebaseJson content;
-      //Si consigue encenderlo
-      content.set("fields/turnOn/booleanValue", false);
-      content.set("fields/on/booleanValue", true);
-      if (Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "turnOn,on")) {
-        Serial.print(F("Encendido!"));
-      } else {
-        Serial.println(fbdo.errorReason());
-      }
-    }
-  } else
-    Serial.println(fbdo.errorReason());
-}
-
-void pingPCFunctions(){
-  
-  }
-
 void setup()
 {
   WOL.setRepeat(3, 100);
@@ -332,7 +394,7 @@ void setup()
 
   if (forceConfig)
   {
-    if (!wm.startConfigPortal("WOLESP_AP", "clock123"))
+    if (!wm.startConfigPortal("WOLESP_AP", "admin1234"))
     {
       Serial.println("failed to connect and hit timeout");
       delay(3000);
@@ -343,7 +405,7 @@ void setup()
   }
   else
   {
-    if (!wm.autoConnect("WOLESP_AP", "clock123"))
+    if (!wm.autoConnect("WOLESP_AP", "admin1234"))
     {
       Serial.println("failed to connect and hit timeout");
       delay(3000);
@@ -379,100 +441,26 @@ void setup()
 
     saveConfigFile();
   }
+  configFirebase();
 }
 
 void loop()
 {
   drd->loop();
   String uid = auth.token.uid.c_str();
-  pingPCFunctions();
-  if (mail_received && pass_received) {
-    configFirebase();
-    if (Firebase.ready())
-    {
-      Serial.println("Estamos dentro.");
-      String documentPath = "Users/" + uid + "/PCs";
-      //documentPath = documentPath + "/PCs";
+  if (Firebase.ready() && (millis() - sendDataPrevMillis > 15000 || sendDataPrevMillis == 0))
+  {
+    sendDataPrevMillis = millis();
+    count++;
+    //FirebaseJson json;
+    //json.add("data", "hello");
+    //json.add("num", count);
+    //Serial.printf("Set json... %s\n\n", Firebase.RTDB.setJSON(&fbdo, "/test/stream/data/json", &json) ? "ok" : fbdo.errorReason().c_str());
+  }
 
-      String PCID = "eIyzIi5z3FEPORPpRjUj";
-      encendido = !encendido;
-      const char* nextPageToken = "";
-      const char* desPCRoute = "";
-      String PCName = "";
-      StaticJsonDocument<2048> pcJson;
-      DeserializationError desErr;
-      do {
-        if (Firebase.Firestore.listDocuments(&fbdo, FIREBASE_PROJECT_ID, "" /* databaseId can be (default) or empty */, documentPath.c_str(), 1 /* The maximum number of documents to return */, nextPageToken /* The nextPageToken value returned from a previous List request, if any. */, "" /* The order to sort results by. For example: priority desc, name. */, "count" /* the field name to mask */, false /* showMissing, iIf the list should show missing documents. A missing document is a document that does not exist but has sub-documents. */)) {
-          //Serial.printf("ok %i\n%s\n\n", i, fbdo.payload().c_str());
-
-          desErr = deserializeJson(pcJson, fbdo.payload().c_str());
-          if (desErr) {
-            Serial.print(F("Deserialization error: "));
-            Serial.println(desErr.c_str());
-          }
-
-          desPCRoute = pcJson["documents"][0]["name"];
-          PCName = desPCRoute;
-          PCName.remove(0, 87);
-          if (PCName != "")
-            getPCData(documentPath, PCName);
-          nextPageToken = pcJson["nextPageToken"];
-          //Serial.print(F("Contenido de PCName: " ));
-          //Serial.println(PCName);
-          //Serial.print(F("Contenido de nextPageToken: " ));
-          //Serial.println(nextPageToken);
-        } else {
-          Serial.println(fbdo.errorReason());
-        }
-        if (nextPageToken != NULL) {
-          if (*nextPageToken == '\0') {
-            //Serial.print(F("JODER EL TOKEN ESTÁ '\0' \n"));
-            break;
-          }
-        }
-      } while (nextPageToken != NULL);
-      /*if (Firebase.Firestore.getDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), ""))
-        Serial.printf("Pues la coleccion es\n%s\n\n", fbdo.payload().c_str());
-        else
-        Serial.println(fbdo.errorReason());
-        intento de deserializacion de toda la lista de PCs
-          StaticJsonDocument<2048> pcJson;
-
-        DeserializationError desErr = deserializeJson(pcJson, fbdo.payload().c_str());
-        if (desErr) {
-        Serial.print(F("Deserialization error: "));
-        Serial.println(desErr.c_str());
-        }
-
-        const char* desPCList = pcJson["documents"];
-
-        Serial.print(F("Tamaño de desPCList: "));
-        Serial.println(sizeof desPCList / sizeof desPCList[0]);*/
-
-      /*FirebaseJson content;
-
-        content.set("fields/on/booleanValue", false);
-
-        if(Firebase.Firestore.patchDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw(), "on")){
-        Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
-        return;
-        }else{
-        Serial.println(fbdo.errorReason());
-        }
-
-        if(Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw())){
-        Serial.printf("ok\n%s\n\n", fbdo.payload().c_str());
-        return;
-        }else{
-        Serial.println(fbdo.errorReason());
-        }*/
-      if (encendido) {
-        encender(documentPath, PCID);
-      } else {
-        apagar(documentPath, PCID);
-      }
-    }
-    delay(10000);
-
+  if (dataChanged)
+  {
+    dataChanged = false;
+    // When stream data is available, do anything here...
   }
 }
