@@ -47,7 +47,6 @@ https://github.com/khoih-prog/ESP_DoubleResetDetector
 * <a href="https://github.com/khoih-prog/ESP_DoubleResetDetector">Double reset detector</a>
 * <a href="https://github.com/mobizt/Firebase-ESP32">Firebase Client for ESP8266 & ESP32</a>
 * <a href="https://github.com/tzapu/WiFiManager">WifiManager</a>
-* 
 
 <!-- CONTACT -->
 ## Contacto
