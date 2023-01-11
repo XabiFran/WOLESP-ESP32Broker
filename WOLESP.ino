@@ -53,6 +53,11 @@ int count = 0;
 
 volatile bool dataChanged = false;
 
+/**
+*Función encargada de recibir y tratar las escrituras de la base de datos.
+*@param data - Los datos que se han escrito.
+*
+*/
 void streamCallback(FirebaseStream data)
 {
   Serial.printf("stream path, %s\nevent path, %s\ndata type, %s\nevent type, %s\n\n",
@@ -125,6 +130,15 @@ void streamCallback(FirebaseStream data)
   dataChanged = true;
 }
 
+/**
+*Función encargada de encender un equipo, comprobar el encendido y escribir el resultado en la base de datos.
+*@param ip - IP del ordenador.
+*@param mac - MAC del ordenador.
+*@param route - Ruta del estado del ordenador.
+*@param resultRoute - Ruta del resultado de la acción.
+*@param PCResultRoute - Ruta del resultado de la acción en el ordenador.
+*
+*/
 void encenderPC(String ip, String mac, String route, String resultRoute, String PCResultRoute) {
   Serial.println(F("LLEGO A LA FUNCIÓN ENCENDER"));
   WOL.sendMagicPacket(mac);
@@ -142,6 +156,14 @@ void encenderPC(String ip, String mac, String route, String resultRoute, String 
   }
 }
 
+/**
+*Función encargada de diagnosticar un equipo y escribir el resultado en la base de datos.
+*@param ip - IP del ordenador.
+*@param mac - MAC del ordenador.
+*@param route - Ruta del estado del ordenador.
+*@param PCResultRoute - Ruta del resultado de la acción en el ordenador.
+*
+*/
 bool pingearPC(String ip, String mac, String route, String PCResultRoute) {
   Serial.println(F("LLEGO A LA FUNCIÓN PINGEAR"));
   Serial.println(route);
@@ -165,6 +187,11 @@ bool pingearPC(String ip, String mac, String route, String PCResultRoute) {
   }
 }
 
+/**
+*Función encargada de controlar el timeout de la base de datos.
+*@param timeout - Indica si el timeout ha sucedido o no.
+*
+*/
 void streamTimeoutCallback(bool timeout)
 {
   if (timeout)
@@ -205,6 +232,10 @@ void fcsUploadCallback(CFS_UploadStatusInfo info)
   }
 }
 
+/**
+ *Función encargada de iniciar sesión en firebase con correo y contraseña y configurar los parámetros necesarios.
+ *
+ */
 void configFirebase() {
   String mail = testString;
   String pass = testString2;
@@ -214,12 +245,11 @@ void configFirebase() {
   auth.user.email = mail;
   auth.user.password = pass;
   Serial.printf("Email got: %s | Pass got: %s \n", mail.c_str(), pass.c_str());
-  /* Assign the callback function for the long running token generation task */
-  config.token_status_callback = tokenStatusCallback; // see addons/TokenHelper.h
+  
+  config.token_status_callback = tokenStatusCallback;
   Firebase.begin(&config, &auth);
   Firebase.reconnectWiFi(true);
-  // For sending payload callback
-  //config.cfs.upload_callback = fcsUploadCallback;
+  
   Serial.println(F("Getting User UID"));
   while ((auth.token.uid) == "") {
     Serial.print(F('.'));
@@ -236,6 +266,9 @@ void configFirebase() {
   Firebase.RTDB.setStreamCallback(&stream, streamCallback, streamTimeoutCallback);
 }
 
+/** 
+ *Función encargada de guardar el archivo de configuración en los SPIFFS.  
+ */
 void saveConfigFile()
 {
   Serial.println(F("Saving config"));
@@ -257,19 +290,13 @@ void saveConfigFile()
   configFile.close();
 }
 
+/** 
+ *Función encargada de cargar el archivo de configuración guardado en los SPIFFS.  
+ */
 bool loadConfigFile()
 {
-  //clean FS, for testing
-  //SPIFFS.format();
-
-  //read configuration from FS json
   Serial.println("mounting FS...");
 
-  // May need to make it begin(true) first time you are using SPIFFS
-  // NOTE: This might not be a good way to do this! begin(true) reformats the spiffs
-  // it will only get called if it fails to mount, which probably means it needs to be
-  // formatted, but maybe dont use this if you have something important saved on spiffs
-  // that can't be replaced.
   if (SPIFFS.begin(false) || SPIFFS.begin(true))
   {
     Serial.println("mounted file system");
@@ -304,19 +331,15 @@ bool loadConfigFile()
   {
     Serial.println("failed to mount FS");
   }
-  //end read
   return false;
 }
 
-//callback notifying us of the need to save config
 void saveConfigCallback()
 {
   Serial.println("Should save config");
   shouldSaveConfig = true;
 }
 
-// This gets called when the config mode is launced, might
-// be useful to update a display with this info.
 void configModeCallback(WiFiManager *myWiFiManager)
 {
   Serial.println("Entered Conf Mode");
@@ -328,7 +351,6 @@ void configModeCallback(WiFiManager *myWiFiManager)
   Serial.println(WiFi.softAPIP());
 }
 
-// Custom HTML WiFiManagerParameter don't support getValue directly
 String getCustomParamValue(WiFiManager *myWiFiManager, String name)
 {
   String value;
@@ -343,6 +365,10 @@ String getCustomParamValue(WiFiManager *myWiFiManager, String name)
   }
   return value;
 }
+/**
+ *Función que se ejecuta al iniciar el ESP32, se encarga de llamar a todas las funciones de configuración inicial.
+ *
+ */
 
 void setup()
 {
@@ -363,30 +389,20 @@ void setup()
     forceConfig = true;
   }
 
-  //WiFi.disconnect();
-  WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
+  WiFi.mode(WIFI_STA);
   Serial.begin(115200);
   delay(10);
 
-  // wm.resetSettings(); // wipe settings
-
   WiFiManager wm;
 
-  //wm.resetSettings(); // wipe settings
-  //set config save notify callback
   wm.setSaveConfigCallback(saveConfigCallback);
-  //set callback that gets called when connecting to previous WiFi fails, and enters Access Point mode
+  
   wm.setAPCallback(configModeCallback);
 
-  //--- additional Configs params ---
-
-  // Text box (String)
-  WiFiManagerParameter custom_text_box("key_text", "Enter your e-mail here", testString, 50); // 50 == max length
+  WiFiManagerParameter custom_text_box("key_text", "Enter your e-mail here", testString, 50);
 
   WiFiManagerParameter custom_text_box2("key_text2", "Enter your password here", testString2, 50);
 
-
-  //add all your parameters here
   wm.addParameter(&custom_text_box);
   wm.addParameter(&custom_text_box2);
 
@@ -398,7 +414,6 @@ void setup()
     {
       Serial.println("failed to connect and hit timeout");
       delay(3000);
-      //reset and try again, or maybe put it to deep sleep
       ESP.restart();
       delay(5000);
     }
@@ -415,26 +430,20 @@ void setup()
     }
   }
 
-  // If we get here, we are connected to the WiFi
   WOL.calculateBroadcastAddress(WiFi.localIP(), WiFi.subnetMask());
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-  //save the custom parameters to FS
   printWelcome();
 
   if (shouldSaveConfig)
   {
-    // Lets deal with the user config values
-
-    // Copy the string value
     strncpy(testString, custom_text_box.getValue(), sizeof(testString));
     Serial.print("testString: ");
     Serial.println(testString);
 
-    // Copy the string value
     strncpy(testString2, custom_text_box2.getValue(), sizeof(testString2));
     Serial.print("testString2: ");
     Serial.println(testString2);
@@ -443,7 +452,10 @@ void setup()
   }
   configFirebase();
 }
-
+/**
+ *Función que se repetirá infinitamente para mantener la autenticación de firebase y la función de reset. 
+ * 
+ */
 void loop()
 {
   drd->loop();
@@ -456,11 +468,5 @@ void loop()
     //json.add("data", "hello");
     //json.add("num", count);
     //Serial.printf("Set json... %s\n\n", Firebase.RTDB.setJSON(&fbdo, "/test/stream/data/json", &json) ? "ok" : fbdo.errorReason().c_str());
-  }
-
-  if (dataChanged)
-  {
-    dataChanged = false;
-    // When stream data is available, do anything here...
   }
 }
