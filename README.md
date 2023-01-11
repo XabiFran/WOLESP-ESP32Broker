@@ -41,7 +41,6 @@ En este diagrama conceptual se muestra una idea del funcionamiento del sistema.
 </a>
 
 ## Bibliotecas usadas
-https://github.com/khoih-prog/ESP_DoubleResetDetector
 
 * <a href="https://github.com/a7md0/WakeOnLan">Wake On Lan for ESP32</a>
 * <a href="https://github.com/khoih-prog/ESP_DoubleResetDetector">Double reset detector</a>
