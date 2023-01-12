@@ -37,7 +37,7 @@ El repositorio del código de los clientes se encuentra aquí: <a href="https://
 En este diagrama conceptual se muestra una idea del funcionamiento del sistema.
 
 <a href="https://github.com/XabiFran/WOLESP-ESP32Broker">
-    <img src="WOLESP_idea.drawio.png" alt="Logo" width="1186" height="731">
+    <img src="WOLESP_idea.drawio.png" alt="Logo" width="1186" height="631">
 </a>
 
 ## Bibliotecas usadas
