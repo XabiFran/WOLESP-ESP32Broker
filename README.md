@@ -28,7 +28,7 @@ El repositorio del código de los clientes se encuentra aquí: <a href="https://
 
 ### Construido con
 
-* ![C](https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white)
+* ![C++](https://img.shields.io/badge/c++-%2300599C.svg?style=for-the-badge&logo=c%2B%2B&logoColor=white)
 * [![Firebase](https://img.shields.io/badge/Firebase-orange?style=for-the-badge&logo=firebase&logoColor=white)](https://firebase.google.com)
 
 <!-- USAGE EXAMPLES -->
